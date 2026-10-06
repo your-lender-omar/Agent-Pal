@@ -86,12 +86,35 @@ CREATE TABLE IF NOT EXISTS broadcasts (
 
 const globalForDb = globalThis as unknown as { agentPalDb?: DatabaseSync };
 
+/** Retries SQLITE_BUSY that SQLite reports without waiting (e.g. two processes creating the file at once). */
+function retryWhileLocked(fn: () => void) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return fn();
+    } catch (err) {
+      if (attempt >= 40 || !/database is locked|SQLITE_BUSY/i.test(String(err))) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 + Math.random() * 100);
+    }
+  }
+}
+
 function open(): DatabaseSync {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   const db = new DatabaseSync(DB_PATH);
   // Wait instead of failing when another process (build worker, second instance) holds the lock.
-  db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-  db.exec(SCHEMA);
+  db.exec("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
+  retryWhileLocked(() => db.exec("PRAGMA journal_mode = WAL;"));
+  // Take the write lock up front so concurrent first-boots queue instead of deadlocking.
+  retryWhileLocked(() => {
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+      db.exec(SCHEMA);
+      db.exec("COMMIT;");
+    } catch (err) {
+      db.exec("ROLLBACK;");
+      throw err;
+    }
+  });
   return db;
 }
 

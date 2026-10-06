@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CalcIcon } from "@/components/CalcIcon";
 import { Badge, PageHeader } from "@/components/ui";
 import { CALCULATORS } from "@/lib/calc";
 
@@ -22,12 +23,17 @@ export default async function CalculatorsPage(props: PageProps<"/calculators">) 
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">{g.title}</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               {CALCULATORS.filter((c) => c.audience === g.key).map((c) => (
-                <Link key={c.slug} href={`/calculators/${c.slug}${suffix}`} className="group rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-brand-500">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-900 group-hover:text-brand-700">{c.name}</span>
-                    {c.popular && <Badge tone="blue">Popular</Badge>}
-                  </div>
-                  <p className="mt-1 text-sm text-slate-500">{c.blurb}</p>
+                <Link key={c.slug} href={`/calculators/${c.slug}${suffix}`} className="group flex gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-colors hover:border-brand-500">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-600">
+                    <CalcIcon slug={c.slug} />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2">
+                      <span className="font-semibold text-slate-900 group-hover:text-brand-700">{c.name}</span>
+                      {c.popular && <Badge tone="blue">Popular</Badge>}
+                    </span>
+                    <span className="mt-1 block text-sm text-slate-500">{c.blurb}</span>
+                  </span>
                 </Link>
               ))}
             </div>

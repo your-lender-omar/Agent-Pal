@@ -29,7 +29,7 @@ export function SettingsForm({ profile, defaults }: { profile: Profile; defaults
       </Card>
 
       <Card className="p-5">
-        <h2 className="mb-1 font-semibold">Your market defaults</h2>
+        <h2 id="defaults" className="mb-1 scroll-mt-24 font-semibold">Your market defaults</h2>
         <p className="mb-4 text-sm text-slate-500">Set these once and every calculator starts with your numbers. Leave blank to use ours.</p>
         <div className="grid gap-4 sm:grid-cols-2">
           {AGENT_DEFAULT_KEYS.map((d) => (
