@@ -5,7 +5,7 @@
   "scripts": {
     "predev": "node scripts/check-node.mjs",
     "dev": "next dev",
-    "preview": "node scripts/stop.mjs && npm run build && npm start",
+    "preview": "git log -1 --format=\">>> Starting AgentPal version %h\" && node scripts/stop.mjs && npm run build && npm start",
     "stop": "node scripts/stop.mjs",
     "restart": "node scripts/stop.mjs && npm run dev",
     "prebuild": "node scripts/check-node.mjs",
