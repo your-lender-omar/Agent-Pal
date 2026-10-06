@@ -2,7 +2,6 @@
   "name": "AgentPal",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
   "postCreateCommand": "npm install",
-  "postAttachCommand": "npm run dev",
   "forwardPorts": [3000],
   "portsAttributes": {
     "3000": { "label": "AgentPal", "onAutoForward": "openBrowser" }

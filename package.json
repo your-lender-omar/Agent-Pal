@@ -5,6 +5,8 @@
   "scripts": {
     "predev": "node scripts/check-node.mjs",
     "dev": "next dev",
+    "stop": "node scripts/stop.mjs",
+    "restart": "node scripts/stop.mjs && npm run dev",
     "prebuild": "node scripts/check-node.mjs",
     "build": "next build",
     "start": "next start",

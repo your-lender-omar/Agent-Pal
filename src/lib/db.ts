@@ -149,8 +149,7 @@ function ensureAdminFromEnv(db: DatabaseSync) {
   }
 }
 
-function openWithAdmin(): DatabaseSync {
-  const db = open();
+function syncAdmin(db: DatabaseSync) {
   // Serialize with other processes starting at the same moment (build workers, multiple instances).
   retryWhileLocked(() => {
     db.exec("BEGIN IMMEDIATE;");
@@ -162,11 +161,24 @@ function openWithAdmin(): DatabaseSync {
       throw err;
     }
   });
+}
+
+function openWithAdmin(): DatabaseSync {
+  const db = open();
+  syncAdmin(db);
   return db;
 }
 
 export const db: DatabaseSync = globalForDb.agentPalDb ?? openWithAdmin();
 if (process.env.NODE_ENV !== "production") globalForDb.agentPalDb = db;
+
+/**
+ * Re-applies ADMIN_EMAIL / ADMIN_PASSWORD. Called when the admin logs in, so a password added or
+ * changed in .env.local while the app is already running works without a restart.
+ */
+export function syncAdminLogin(email: string) {
+  if (email && email === process.env.ADMIN_EMAIL?.trim().toLowerCase()) syncAdmin(db);
+}
 
 export type Agent = {
   id: number;

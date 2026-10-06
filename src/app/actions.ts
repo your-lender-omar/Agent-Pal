@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { endSession, hashPassword, requireAdmin, requireAgent, startSession, verifyPassword } from "@/lib/auth";
 import { getCalculator, AGENT_DEFAULT_KEYS, type Inputs } from "@/lib/calc";
-import { one, run, type Client } from "@/lib/db";
+import { one, run, syncAdminLogin, type Client } from "@/lib/db";
 import { normalizePhone } from "@/lib/format";
 import { broadcast, notifyInApp, type Channel } from "@/lib/notify";
 
@@ -62,7 +62,9 @@ export async function signup(_: FormState, fd: FormData): Promise<FormState> {
 }
 
 export async function login(_: FormState, fd: FormData): Promise<FormState> {
-  const row = one<{ id: number; password_hash: string }>("SELECT id, password_hash FROM agents WHERE email = ?", str(fd, "email").toLowerCase());
+  const email = str(fd, "email").toLowerCase();
+  syncAdminLogin(email);
+  const row = one<{ id: number; password_hash: string }>("SELECT id, password_hash FROM agents WHERE email = ?", email);
   if (!row || !verifyPassword(str(fd, "password"), row.password_hash)) return fail("Email or password is incorrect.", fd);
   await startSession(row.id);
   redirect("/dashboard");

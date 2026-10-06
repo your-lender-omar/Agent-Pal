@@ -99,6 +99,8 @@ src/app/r/[token]/   Public client-facing report
 
 ## Troubleshooting
 
-- **Login or signup shows an error in GitHub Codespaces:** run `git pull`, stop the app with `Ctrl + C`, then `npm run dev` again.
+- **Start / restart the app:** `npm run dev` starts it. `npm run restart` stops a running copy and starts it fresh (do this after `git pull`). `npm run stop` stops it.
+- **"AgentPal is already running on port 3000":** it's already up. Open the PORTS tab → 3000 → globe icon, or run `npm run restart`.
+- **Admin login says incorrect:** check `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env.local` (no spaces around `=`), save, and log in again. No restart needed.
 - **"AgentPal needs Node.js 22.13 or newer":** run `nvm install 22 && nvm use 22`, then start the app again.
 - **"Something went wrong" page:** it shows the underlying error message. Copy it when reporting the problem.
