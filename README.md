@@ -6,7 +6,7 @@ A fast, simple toolkit for real estate agents: quick calculators with plain-Engl
 
 | Area | What agents get |
 | --- | --- |
-| **Signup** | Name, email, **cell phone** (required and normalized to +1…), brokerage, market, and an explicit, unchecked-by-default SMS consent checkbox (TCPA). The first account created becomes the admin. |
+| **Signup** | Name, email, **cell phone** (required and normalized to +1…), brokerage, market, and an explicit, unchecked-by-default SMS consent checkbox (TCPA). The admin login is set with `ADMIN_EMAIL` / `ADMIN_PASSWORD` (see below). |
 | **Calculators** | Buyer Breakdown (payment + cash to close, FHA/VA/Conventional/Cash, seller-concession caps), Seller Net Sheet, What Can I Afford?, Rent vs Buy, Sell to Net, Points Buydown, Refinance, Extra Payment. Results update **as you type**, with no Compute button. |
 | **Quick breakdown** | Every result includes 2–5 plain-English bullets an agent can read to a client word-for-word ("Every 1/8% in rate moves the payment ~$32/mo"). |
 | **Client profiles** | Buyer/seller, stage (lead → active → under contract → closed), budget, pre-approval, lender, area, address, closing date, follow-up date, notes, and every saved breakdown. Calculators pre-fill from the client's budget. |
@@ -23,7 +23,20 @@ cp .env.example .env   # optional: email/SMS keys, cron secret
 npm run dev            # http://localhost:3000
 ```
 
-Sign up. The first account is the admin. Data lives in `./data/agentpal.db` (SQLite via Node's built-in `node:sqlite`, so there's no database to install). Node 22.13+ is required.
+Then log in with your admin login (below). Data lives in `./data/agentpal.db` (SQLite via Node's built-in `node:sqlite`, so there's no database to install). Node 22.13+ is required.
+
+### Admin login
+
+The admin account (Admin tab: agent list, CSV export, notifications) is created from settings, never stored in the code. Put these in `.env.local` locally or in your host's environment variables:
+
+```bash
+ADMIN_EMAIL=you@yourdomain.com
+ADMIN_PASSWORD=a-long-password
+ADMIN_NAME="Your Name"      # optional
+ADMIN_PHONE=3125550100      # optional
+```
+
+The account is created on startup. To reset the admin password, change `ADMIN_PASSWORD` and restart. If no `ADMIN_EMAIL` is set, the first account to sign up becomes the admin instead.
 
 ### Daily reminders
 

@@ -4,22 +4,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { one, run, type Agent } from "./db";
 
+export { hashPassword, verifyPassword } from "./password";
+
 const COOKIE = "ap_session";
 const SESSION_DAYS = 30;
-
-export function hashPassword(password: string): string {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
-}
-
-export function verifyPassword(password: string, stored: string): boolean {
-  const [salt, hash] = stored.split(":");
-  if (!salt || !hash) return false;
-  const candidate = crypto.scryptSync(password, salt, 64);
-  const expected = Buffer.from(hash, "hex");
-  return expected.length === candidate.length && crypto.timingSafeEqual(candidate, expected);
-}
 
 export async function startSession(agentId: number) {
   const token = crypto.randomBytes(32).toString("base64url");

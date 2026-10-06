@@ -2,6 +2,8 @@ import "server-only";
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { normalizePhone } from "./format";
+import { hashPassword, verifyPassword } from "./password";
 
 // Single SQLite file for local/dev and small deployments. Swap for Postgres when
 // you outgrow one server (see README → "Going to production").
@@ -118,7 +120,52 @@ function open(): DatabaseSync {
   return db;
 }
 
-export const db: DatabaseSync = globalForDb.agentPalDb ?? open();
+/**
+ * The admin login comes from ADMIN_EMAIL / ADMIN_PASSWORD (in .env.local or your host's settings),
+ * never from the code. On startup the account is created, or promoted to admin and its password
+ * reset to match, so changing the setting and restarting is also how you recover the admin login.
+ */
+function ensureAdminFromEnv(db: DatabaseSync) {
+  const email = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const password = process.env.ADMIN_PASSWORD;
+  if (!email || !password) return;
+  if (password.length < 8) {
+    console.warn("[agentpal] ADMIN_PASSWORD must be at least 8 characters; admin login not set up.");
+    return;
+  }
+  const existing = db.prepare("SELECT id, password_hash FROM agents WHERE email = ?").get(email) as
+    | { id: number; password_hash: string }
+    | undefined;
+  if (existing) {
+    const hash = verifyPassword(password, existing.password_hash) ? existing.password_hash : hashPassword(password);
+    db.prepare("UPDATE agents SET role = 'admin', password_hash = ? WHERE id = ?").run(hash, existing.id);
+  } else {
+    db.prepare("INSERT INTO agents (name, email, phone, password_hash, role) VALUES (?, ?, ?, ?, 'admin')").run(
+      process.env.ADMIN_NAME?.trim() || "Admin",
+      email,
+      normalizePhone(process.env.ADMIN_PHONE ?? "") ?? "",
+      hashPassword(password),
+    );
+  }
+}
+
+function openWithAdmin(): DatabaseSync {
+  const db = open();
+  // Serialize with other processes starting at the same moment (build workers, multiple instances).
+  retryWhileLocked(() => {
+    db.exec("BEGIN IMMEDIATE;");
+    try {
+      ensureAdminFromEnv(db);
+      db.exec("COMMIT;");
+    } catch (err) {
+      db.exec("ROLLBACK;");
+      throw err;
+    }
+  });
+  return db;
+}
+
+export const db: DatabaseSync = globalForDb.agentPalDb ?? openWithAdmin();
 if (process.env.NODE_ENV !== "production") globalForDb.agentPalDb = db;
 
 export type Agent = {

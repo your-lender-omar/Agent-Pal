@@ -41,8 +41,9 @@ export async function signup(_: FormState, fd: FormData): Promise<FormState> {
   if (password.length < 8) return fail("Password must be at least 8 characters.", fd);
   if (one("SELECT id FROM agents WHERE email = ?", email)) return fail("An account with that email already exists. Try logging in.", fd);
 
-  // The very first account becomes the admin (you). Everyone after is an agent.
-  const isFirst = !one("SELECT id FROM agents LIMIT 1");
+  // With ADMIN_EMAIL configured the admin account is managed by the server, so signups are always agents.
+  // Without it, the very first account becomes the admin.
+  const isFirst = !process.env.ADMIN_EMAIL && !one("SELECT id FROM agents LIMIT 1");
   const res = run(
     `INSERT INTO agents (name, email, phone, brokerage, license_number, market, password_hash, role, sms_opt_in, email_opt_in)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
