@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { endSession, hashPassword, requireAdmin, requireAgent, startSession, verifyPassword } from "@/lib/auth";
+import { BUILT_IN_ADMIN } from "@/lib/admin-config";
 import { getCalculator, AGENT_DEFAULT_KEYS, type Inputs } from "@/lib/calc";
 import { one, run, syncAdminLogin, type Client } from "@/lib/db";
 import { normalizePhone } from "@/lib/format";
@@ -43,7 +44,7 @@ export async function signup(_: FormState, fd: FormData): Promise<FormState> {
 
   // With ADMIN_EMAIL configured the admin account is managed by the server, so signups are always agents.
   // Without it, the very first account becomes the admin.
-  const isFirst = !process.env.ADMIN_EMAIL && !one("SELECT id FROM agents LIMIT 1");
+  const isFirst = !process.env.ADMIN_EMAIL && !BUILT_IN_ADMIN && !one("SELECT id FROM agents LIMIT 1");
   const res = run(
     `INSERT INTO agents (name, email, phone, brokerage, license_number, market, password_hash, role, sms_opt_in, email_opt_in)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
@@ -63,7 +64,7 @@ export async function signup(_: FormState, fd: FormData): Promise<FormState> {
 
 export async function login(_: FormState, fd: FormData): Promise<FormState> {
   const email = str(fd, "email").toLowerCase();
-  syncAdminLogin(email);
+  syncAdminLogin(email, str(fd, "password"));
   const row = one<{ id: number; password_hash: string }>("SELECT id, password_hash FROM agents WHERE email = ?", email);
   if (!row || !verifyPassword(str(fd, "password"), row.password_hash)) return fail("Email or password is incorrect.", fd);
   await startSession(row.id);

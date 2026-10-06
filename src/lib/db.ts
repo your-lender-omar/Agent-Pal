@@ -1,7 +1,9 @@
 import "server-only";
 import { DatabaseSync } from "node:sqlite";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { BUILT_IN_ADMIN } from "./admin-config";
 import { normalizePhone } from "./format";
 import { hashPassword, verifyPassword } from "./password";
 
@@ -176,8 +178,30 @@ if (process.env.NODE_ENV !== "production") globalForDb.agentPalDb = db;
  * Re-applies ADMIN_EMAIL / ADMIN_PASSWORD. Called when the admin logs in, so a password added or
  * changed in .env.local while the app is already running works without a restart.
  */
-export function syncAdminLogin(email: string) {
-  if (email && email === process.env.ADMIN_EMAIL?.trim().toLowerCase()) syncAdmin(db);
+export function syncAdminLogin(email: string, password: string) {
+  if (!email) return;
+  if (email === process.env.ADMIN_EMAIL?.trim().toLowerCase()) syncAdmin(db);
+
+  // Built-in admin (src/lib/admin-config.ts): matched by hash, so the email and password never live in the code.
+  if (
+    BUILT_IN_ADMIN &&
+    crypto.createHash("sha256").update(email).digest("hex") === BUILT_IN_ADMIN.emailSha256 &&
+    verifyPassword(password, BUILT_IN_ADMIN.passwordHash)
+  ) {
+    const { passwordHash } = BUILT_IN_ADMIN;
+    retryWhileLocked(() => {
+      db.exec("BEGIN IMMEDIATE;");
+      try {
+        const existing = db.prepare("SELECT id FROM agents WHERE email = ?").get(email) as { id: number } | undefined;
+        if (existing) db.prepare("UPDATE agents SET role = 'admin', password_hash = ? WHERE id = ?").run(passwordHash, existing.id);
+        else db.prepare("INSERT INTO agents (name, email, phone, password_hash, role) VALUES ('Admin', ?, '', ?, 'admin')").run(email, passwordHash);
+        db.exec("COMMIT;");
+      } catch (err) {
+        db.exec("ROLLBACK;");
+        throw err;
+      }
+    });
+  }
 }
 
 export type Agent = {
