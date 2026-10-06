@@ -83,3 +83,9 @@ src/app/r/[token]/   Public client-facing report
 **Trust & compliance**
 - Keep SMS strictly opt-in, honor STOP, and log consent timestamps. Have a privacy policy and terms before launch.
 - Keep the "estimate, not a Loan Estimate" disclaimer on every client-facing report.
+
+## Troubleshooting
+
+- **Login or signup shows an error in GitHub Codespaces:** run `git pull`, stop the app with `Ctrl + C`, then `npm run dev` again.
+- **"AgentPal needs Node.js 22.13 or newer":** run `nvm install 22 && nvm use 22`, then start the app again.
+- **"Something went wrong" page:** it shows the underlying error message. Copy it when reporting the problem.
