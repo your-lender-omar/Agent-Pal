@@ -13,6 +13,7 @@ export default function ErrorPage({ error, retry }: { error: Error & { digest?: 
         <pre className="mt-4 overflow-x-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-3 text-left text-xs text-slate-700">
           {error.message || "Unknown error"}
           {error.digest ? `\nRef: ${error.digest}` : ""}
+          {`\nVersion: ${process.env.NEXT_PUBLIC_APP_VERSION ?? "unknown"}`}
         </pre>
         <div className="mt-5 flex justify-center gap-2">
           <button onClick={() => retry()} className={buttonClass()}>Try again</button>
