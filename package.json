@@ -12,7 +12,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "admin:hash": "node scripts/admin-hash.mjs"
+    "admin:hash": "node scripts/admin-hash.mjs",
+    "update": "git fetch origin claude/realtor-ecosystem-platform-pixm6f && git reset --hard FETCH_HEAD && npm install --no-audit --no-fund && npm run preview"
   },
   "dependencies": {
     "next": "16.3.7",
