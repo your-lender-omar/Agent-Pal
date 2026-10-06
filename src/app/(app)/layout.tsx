@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { logout } from "@/app/actions";
 import { AppNav } from "@/components/AppNav";
 import { Logo } from "@/components/Logo";
 import { requireAgent } from "@/lib/auth";
@@ -36,7 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             <Link href="/settings" className="grid h-9 w-9 place-items-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700" title="Profile & settings">
               {initials}
             </Link>
-            <form action={logout}>
+            <form method="post" action="/api/auth/logout">
               <button className="hidden rounded-lg px-2 py-2 text-sm text-slate-500 hover:bg-slate-100 sm:block">Log out</button>
             </form>
           </div>

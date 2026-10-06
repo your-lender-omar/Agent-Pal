@@ -3,12 +3,11 @@
 import crypto from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { endSession, hashPassword, requireAdmin, requireAgent, startSession, verifyPassword } from "@/lib/auth";
-import { BUILT_IN_ADMIN } from "@/lib/admin-config";
+import { requireAdmin, requireAgent } from "@/lib/auth";
 import { getCalculator, AGENT_DEFAULT_KEYS, type Inputs } from "@/lib/calc";
-import { one, run, syncAdminLogin, type Client } from "@/lib/db";
+import { one, run, type Client } from "@/lib/db";
 import { normalizePhone } from "@/lib/format";
-import { broadcast, notifyInApp, type Channel } from "@/lib/notify";
+import { broadcast, type Channel } from "@/lib/notify";
 
 export type FormState = { error?: string; ok?: string; values?: Record<string, string> } | undefined;
 
@@ -27,54 +26,6 @@ const optNum = (fd: FormData, key: string) => {
   const s = str(fd, key).replace(/[$,]/g, "");
   return s === "" || !Number.isFinite(Number(s)) ? null : Number(s);
 };
-const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
-
-// ── Auth ──────────────────────────────────────────────────────────────────────
-
-export async function signup(_: FormState, fd: FormData): Promise<FormState> {
-  const name = str(fd, "name");
-  const email = str(fd, "email").toLowerCase();
-  const phone = normalizePhone(str(fd, "phone"));
-  const password = str(fd, "password");
-  if (!name) return fail("Please enter your name.", fd);
-  if (!isEmail(email)) return fail("Please enter a valid email.", fd);
-  if (!phone) return fail("Please enter a valid 10-digit US cell number.", fd);
-  if (password.length < 8) return fail("Password must be at least 8 characters.", fd);
-  if (one("SELECT id FROM agents WHERE email = ?", email)) return fail("An account with that email already exists. Try logging in.", fd);
-
-  // With ADMIN_EMAIL configured the admin account is managed by the server, so signups are always agents.
-  // Without it, the very first account becomes the admin.
-  const isFirst = !process.env.ADMIN_EMAIL && !BUILT_IN_ADMIN && !one("SELECT id FROM agents LIMIT 1");
-  const res = run(
-    `INSERT INTO agents (name, email, phone, brokerage, license_number, market, password_hash, role, sms_opt_in, email_opt_in)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-    name, email, phone, optStr(fd, "brokerage"), optStr(fd, "license_number"), optStr(fd, "market"),
-    hashPassword(password), isFirst ? "admin" : "agent", fd.get("sms_opt_in") ? 1 : 0,
-  );
-  const id = Number(res.lastInsertRowid);
-  notifyInApp(id, {
-    title: `Welcome, ${name.split(" ")[0]}!`,
-    body: "Add your first client, then run a Buyer Breakdown. You can save it to their profile and text them a link.",
-    link: "/clients/new",
-    kind: "welcome",
-  });
-  await startSession(id);
-  redirect("/dashboard");
-}
-
-export async function login(_: FormState, fd: FormData): Promise<FormState> {
-  const email = str(fd, "email").toLowerCase();
-  syncAdminLogin(email, str(fd, "password"));
-  const row = one<{ id: number; password_hash: string }>("SELECT id, password_hash FROM agents WHERE email = ?", email);
-  if (!row || !verifyPassword(str(fd, "password"), row.password_hash)) return fail("Email or password is incorrect.", fd);
-  await startSession(row.id);
-  redirect("/dashboard");
-}
-
-export async function logout() {
-  await endSession();
-  redirect("/");
-}
 
 // ── Profile & settings ────────────────────────────────────────────────────────
 

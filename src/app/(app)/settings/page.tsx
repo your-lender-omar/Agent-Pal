@@ -1,4 +1,3 @@
-import { logout } from "@/app/actions";
 import { PageHeader } from "@/components/ui";
 import { requireAgent } from "@/lib/auth";
 import type { AgentDefaults } from "@/lib/calc/types";
@@ -11,7 +10,7 @@ export default async function SettingsPage() {
   const a = await requireAgent();
   return (
     <div className="mx-auto max-w-3xl">
-      <PageHeader title="Profile & settings" action={<form action={logout}><button className="text-sm text-slate-500 hover:underline">Log out</button></form>} />
+      <PageHeader title="Profile & settings" action={<form method="post" action="/api/auth/logout"><button className="text-sm text-slate-500 hover:underline">Log out</button></form>} />
       <SettingsForm
         profile={{
           name: a.name, email: a.email, phone: prettyPhone(a.phone), brokerage: a.brokerage ?? "", license_number: a.license_number ?? "",
