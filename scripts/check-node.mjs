@@ -23,12 +23,23 @@ if (process.env.npm_lifecycle_event === "predev") {
     srv.listen(port);
   });
   if (!free) {
-    console.error(`
+    const responds = await fetch(`http://localhost:${port}/login`, { signal: AbortSignal.timeout(8000) })
+      .then(() => true)
+      .catch(() => false);
+    console.error(
+      responds
+        ? `
   AgentPal is already running on port ${port}.
 
   To open it:     click the PORTS tab at the bottom, then the globe icon next to ${port}.
   To restart it:  type  npm run restart  and press Enter (do this after git pull or editing .env.local).
-`);
+`
+        : `
+  Something on port ${port} is frozen and not answering (that causes "HTTP ERROR 504").
+
+  Fix it:  type  npm run restart  and press Enter.
+`,
+    );
     process.exit(1);
   }
 }

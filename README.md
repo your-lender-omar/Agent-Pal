@@ -99,6 +99,8 @@ src/app/r/[token]/   Public client-facing report
 
 ## Troubleshooting
 
+- **Fastest way to try it (Codespaces):** `npm run preview` builds once (1–2 min), then every page loads instantly. Re-run it after `git pull`.
+- **"HTTP ERROR 504" / page never loads:** run `npm run restart` (or `npm run preview`). It force-stops a frozen copy holding port 3000.
 - **Start / restart the app:** `npm run dev` starts it. `npm run restart` stops a running copy and starts it fresh (do this after `git pull`). `npm run stop` stops it.
 - **"AgentPal is already running on port 3000":** it's already up. Open the PORTS tab → 3000 → globe icon, or run `npm run restart`.
 - **Admin login says incorrect:** check `ADMIN_EMAIL` / `ADMIN_PASSWORD` in `.env.local` (no spaces around `=`), save, and log in again. No restart needed.
