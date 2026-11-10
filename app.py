@@ -1,7 +1,8 @@
-"""Desktop pet: a placeholder sprite that hops between random points on every connected screen.
+"""Desktop pet: a sprite that hops between random points on every connected screen.
 
 Settings come from config.json (edit them with dashboard.py). The pet checks the file
-every half second and applies changes as soon as it is saved.
+every half second and applies changes as soon as it is saved. Reminders play a
+presentation from animations.py and show their text in a speech bubble.
 
 Run with:  python app.py
 """
@@ -9,15 +10,33 @@ Run with:  python app.py
 import random
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
-from PyQt6.QtCore import QRect, Qt, QTimer
-from PyQt6.QtGui import QColor, QGuiApplication, QPainter
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
+from PyQt6.QtGui import (
+    QColor,
+    QFontMetrics,
+    QGuiApplication,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QTextOption,
+)
 from PyQt6.QtWidgets import QApplication, QWidget
 
+from animations import PRESENTATION_MS, PresentationOverlay, random_style
 from config_store import CONFIG_PATH, ConfigError, DEFAULT_CONFIG, load_config
+
+ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "skins"
 
 PET_SIZE = 60
 CONFIG_POLL_MS = 500
+WALK_MS = 800                          # how long walk.png shows after a move
+BUBBLE_MS = PRESENTATION_MS + 2500     # speech bubble stays a little after the presentation
+BUBBLE_WIDTH = 230
+BUBBLE_PAD = 10
+BUBBLE_TAIL = 10
 
 # How often the pet wanders on its own. "only_important" has no entry: it only moves when a reminder fires.
 FREQUENCY_MOVE_MS = {
@@ -25,7 +44,7 @@ FREQUENCY_MOVE_MS = {
     "interval_10min": 10 * 60 * 1000,
 }
 
-# Placeholder colours standing in for the real caricature skins.
+# Fallback colours, used when a skin folder has no PNGs yet.
 SKIN_COLORS = {
     "skin1": QColor(255, 105, 97),
     "skin2": QColor(92, 170, 255),
@@ -133,14 +152,141 @@ class ScreenManager:
         return "\n".join(lines)
 
 
+def pick_random_skin(assets_dir: Path, rng=random) -> Path:
+    """Choose one skin folder from random_pool/. Falls back to skin1-skin5 if the pool is empty."""
+    pool_dir = assets_dir / "random_pool"
+    pool = sorted(p for p in pool_dir.iterdir() if p.is_dir()) if pool_dir.is_dir() else []
+    if not pool:
+        pool = [assets_dir / f"skin{i}" for i in range(1, 6)]
+    return rng.choice(pool)
+
+
+class SkinSprites:
+    """idle.png and walk.png from one skin folder. A missing file leaves that sprite as None."""
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
+        self.idle = self._load("idle.png")
+        walk = self._load("walk.png")
+        self.walk = walk if walk is not None else self.idle
+
+    def _load(self, filename: str) -> QPixmap | None:
+        path = self.folder / filename
+        if not path.is_file():
+            return None
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            print(f"[skin] Could not read {path}")
+            return None
+        return pixmap.scaled(
+            PET_SIZE, PET_SIZE,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+
+class SpeechBubble(QWidget):
+    """Transparent speech bubble attached above the pet, or below it when there is no room."""
+
+    def __init__(self, pet: "DesktopPet") -> None:
+        super().__init__()
+        self.pet = pet
+        self.text = ""
+        self._below = False
+        self._tail_x = BUBBLE_WIDTH // 2
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowTransparentForInput
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
+
+    def show_text(self, text: str, duration_ms: int) -> None:
+        self.text = text
+        metrics = QFontMetrics(self.font())
+        text_rect = metrics.boundingRect(
+            QRect(0, 0, BUBBLE_WIDTH - 2 * BUBBLE_PAD, 0),
+            int(Qt.TextFlag.TextWordWrap),
+            text,
+        )
+        height = max(text_rect.height(), metrics.height()) + 2 * BUBBLE_PAD + BUBBLE_TAIL
+        self.setFixedSize(BUBBLE_WIDTH, height)
+        self.follow()
+        self.show()
+        self._hide_timer.start(duration_ms)
+
+    def follow(self) -> None:
+        """Move next to the pet. Called whenever the pet moves, and before the bubble is shown."""
+        pet_rect = self.pet.geometry()
+        centre = pet_rect.center()
+        screen = QGuiApplication.screenAt(centre) or QGuiApplication.primaryScreen()
+        area = screen.availableGeometry()
+
+        x = centre.x() - self.width() // 2
+        x = max(area.left(), min(x, area.right() - self.width() + 1))
+        y = pet_rect.top() - self.height() + 1
+        self._below = y < area.top()
+        if self._below:
+            y = pet_rect.bottom() + 1
+
+        self.move(x, y)
+        self._tail_x = centre.x() - x
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        w, h = self.width(), self.height()
+        tail = BUBBLE_TAIL
+        body_top = tail if self._below else 0
+        body = QRectF(0, body_top, w, h - tail)
+
+        path = QPainterPath()
+        path.addRoundedRect(body, 12, 12)
+        tx = max(16, min(self._tail_x, w - 16))
+        point = QPointF(tx, body.top() - tail if self._below else body.bottom() + tail)
+        base_y = body.top() if self._below else body.bottom()
+        pointer = QPainterPath()
+        pointer.moveTo(tx - 8, base_y)
+        pointer.lineTo(point)
+        pointer.lineTo(tx + 8, base_y)
+        pointer.closeSubpath()
+        path.addPath(pointer)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor(60, 50, 40), 1.5))
+        painter.setBrush(QColor(255, 252, 240, 240))
+        painter.drawPath(path)
+        painter.setPen(QColor(30, 30, 30))
+        option = QTextOption(Qt.AlignmentFlag.AlignCenter)
+        option.setWrapMode(QTextOption.WrapMode.WordWrap)
+        painter.drawText(body.adjusted(BUBBLE_PAD, BUBBLE_PAD, -BUBBLE_PAD, -BUBBLE_PAD), self.text, option)
+        painter.end()
+
+
 class DesktopPet(QWidget):
-    def __init__(self, screen_manager: ScreenManager, config_path=CONFIG_PATH) -> None:
+    def __init__(self, screen_manager: ScreenManager, config_path: Path = CONFIG_PATH,
+                 assets_dir: Path = ASSETS_DIR) -> None:
         super().__init__()
         self.screen_manager = screen_manager
         self.config_path = config_path
+        self.assets_dir = assets_dir
         self.config: dict | None = None
         self.config_stamp = None
         self.window_interaction = DEFAULT_CONFIG["window_interaction"]
+
+        # RANDOM is chosen once at boot and kept for the whole session.
+        self.random_skin_dir = pick_random_skin(assets_dir)
+        print(f"[skin] RANDOM pinned for this session: {self.random_skin_dir.name}")
+
+        self.sprites: SkinSprites | None = None
+        self.sprite_cache: dict[Path, SkinSprites] = {}
+        self.color = SKIN_COLORS["skin1"]
+        self.walking = False
+        self.reminder_timers: list[QTimer] = []
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -151,15 +297,20 @@ class DesktopPet(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedSize(PET_SIZE, PET_SIZE)
 
-        self.color = SKIN_COLORS["skin1"]
-        self.reminder_timers: list[QTimer] = []
-
         self.move_timer = QTimer(self)
-        self.move_timer.timeout.connect(self.relocate)
+        self.move_timer.timeout.connect(self.wander)
 
         self.config_timer = QTimer(self)
         self.config_timer.setInterval(CONFIG_POLL_MS)
         self.config_timer.timeout.connect(self.check_config)
+
+        self.walk_timer = QTimer(self)
+        self.walk_timer.setSingleShot(True)
+        self.walk_timer.timeout.connect(self._stop_walking)
+
+        self.bubble = SpeechBubble(self)
+        self.overlay = PresentationOverlay()
+        self.overlay.presentation_finished.connect(self.relocate)
 
     def start(self) -> None:
         self.load_settings()
@@ -196,11 +347,20 @@ class DesktopPet(QWidget):
                 return
         self.apply_settings(cfg)
 
+    def _sprites_for(self, folder: Path) -> SkinSprites:
+        if folder not in self.sprite_cache:
+            self.sprite_cache[folder] = SkinSprites(folder)
+        return self.sprite_cache[folder]
+
     def apply_settings(self, cfg: dict) -> None:
-        skin = cfg["selected_skin"]
-        if skin == "RANDOM":
-            skin = random.choice(list(SKIN_COLORS))
-        self.color = SKIN_COLORS[skin]
+        if cfg["selected_skin"] == "RANDOM":
+            folder = self.random_skin_dir
+        else:
+            folder = self.assets_dir / cfg["selected_skin"]
+        self.sprites = self._sprites_for(folder)
+        self.color = SKIN_COLORS.get(folder.name, SKIN_COLORS["skin1"])
+        if self.sprites.idle is None:
+            print(f"[skin] No idle.png in {folder}; drawing a placeholder circle.")
         self.window_interaction = cfg["window_interaction"]
 
         # Wandering: restart the move timer with the new frequency, or stop it.
@@ -225,31 +385,53 @@ class DesktopPet(QWidget):
         self.config = cfg
         self.update()
         print(
-            f"[config] Applied: skin={cfg['selected_skin']} (showing {skin}), "
+            f"[config] Applied: skin={cfg['selected_skin']} (folder {folder.name}), "
             f"frequency={cfg['frequency']}, window_interaction={cfg['window_interaction']}, "
             f"reminders={len(cfg['custom_reminders'])}"
         )
 
     # ---- behaviour -------------------------------------------------------
 
+    def wander(self) -> None:
+        """Timer slot for random moves. Skipped while a presentation is playing."""
+        if not self.overlay.is_playing():
+            self.relocate()
+
     def fire_reminder(self, rule: dict) -> None:
         print(f"[reminder] {rule['name']}: {rule['text']}")
-        self.relocate()
+        style = random_style()
+        print(f"[presentation] {style.name}")
+        screen = QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
+        self.bubble.show_text(rule["text"], BUBBLE_MS)
+        self.overlay.play(style, screen.geometry(), QPointF(self.geometry().center()), rule["text"])
 
     def relocate(self) -> None:
         screen = self.screen_manager.random_screen()
         x, y = self.screen_manager.random_point(screen, PET_SIZE)
         self.move(x, y)
+        self.bubble.follow()
+        self.walking = True
+        self.walk_timer.start(WALK_MS)
+        self.update()
         print(f"Moved to ({x}, {y}) on {screen.name or 'screen'} "
               f"[x={screen.x} y={screen.y} {screen.width}x{screen.height}]")
+
+    def _stop_walking(self) -> None:
+        self.walking = False
+        self.update()
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(self.color)
-        # Placeholder for the caricature: a circle filling the 60x60 widget.
-        painter.drawEllipse(0, 0, PET_SIZE, PET_SIZE)
+        pixmap = None
+        if self.sprites is not None:
+            pixmap = self.sprites.walk if self.walking else self.sprites.idle
+        if pixmap is not None:
+            painter.drawPixmap((PET_SIZE - pixmap.width()) // 2, (PET_SIZE - pixmap.height()) // 2, pixmap)
+        else:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self.color)
+            painter.drawEllipse(0, 0, PET_SIZE, PET_SIZE)
         painter.end()
 
 
