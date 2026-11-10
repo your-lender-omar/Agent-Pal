@@ -478,6 +478,7 @@ class DesktopPet(QWidget):
         screen = QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
         self.bubble.show_text(text, BUBBLE_MS)
         self.overlay.play(style, screen.geometry(), QPointF(self.geometry().center()), text)
+        self.bubble.raise_()  # the overlay was just shown on top; keep the bubble's text readable
 
     def fire_reminder(self, rule: dict) -> None:
         print(f"[reminder] {rule['name']}: {rule['text']}")
