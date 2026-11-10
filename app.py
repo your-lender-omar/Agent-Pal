@@ -1,18 +1,22 @@
 """Desktop pet: a sprite that hops between random points on every connected screen.
 
-Settings come from config.json (edit them with dashboard.py). The pet checks the file
-every half second and applies changes as soon as it is saved. Reminders play a
-presentation from animations.py and show their text in a speech bubble.
+Settings come from config.json (edit them with dashboard.py). The pet checks the file every
+half second and applies changes as soon as it is saved. Reminders and important items from
+Gmail, Calendar and Airtable play a presentation (animations.py) and show their text in a
+speech bubble with "Give Food" and "Spam" buttons. Those buttons train the keyword weights
+in brain.py (weights.json).
 
 Run with:  python app.py
 """
 
+import logging
+import queue
 import random
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt6.QtCore import QPointF, QRect, QRectF, Qt, QTimer
+from PyQt6.QtCore import QPointF, QRect, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
     QColor,
     QFontMetrics,
@@ -23,20 +27,24 @@ from PyQt6.QtGui import (
     QPixmap,
     QTextOption,
 )
-from PyQt6.QtWidgets import QApplication, QWidget
+from PyQt6.QtWidgets import QApplication, QLabel, QPushButton, QWidget
 
 from animations import PRESENTATION_MS, PresentationOverlay, random_style
+from brain import WEIGHTS_PATH, Brain
 from config_store import CONFIG_PATH, ConfigError, DEFAULT_CONFIG, load_config
+from workers import IntegrationHub, Item
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "skins"
 
 PET_SIZE = 60
 CONFIG_POLL_MS = 500
+HUB_POLL_MS = 500
 WALK_MS = 800                          # how long walk.png shows after a move
-BUBBLE_MS = PRESENTATION_MS + 2500     # speech bubble stays a little after the presentation
-BUBBLE_WIDTH = 230
+BUBBLE_MS = PRESENTATION_MS + 2500     # bubble stays a little after the presentation
+BUBBLE_WIDTH = 250
 BUBBLE_PAD = 10
 BUBBLE_TAIL = 10
+BUTTON_GAP = 8
 
 # How often the pet wanders on its own. "only_important" has no entry: it only moves when a reminder fires.
 FREQUENCY_MOVE_MS = {
@@ -52,6 +60,8 @@ SKIN_COLORS = {
     "skin4": QColor(255, 196, 64),
     "skin5": QColor(180, 120, 220),
 }
+
+log = logging.getLogger("app")
 
 
 @dataclass(frozen=True)
@@ -186,7 +196,17 @@ class SkinSprites:
 
 
 class SpeechBubble(QWidget):
-    """Transparent speech bubble attached above the pet, or below it when there is no room."""
+    """Clickable speech bubble attached above the pet, or below it when there is no room.
+
+    It shows the text and two buttons. "Give Food" and "Spam" emit food_requested and
+    spam_requested with the text. Spam also closes the bubble.
+    """
+
+    food_requested = pyqtSignal(str)
+    spam_requested = pyqtSignal(str)
+
+    FOOD_LABEL = "Give Food 🍖"
+    SPAM_LABEL = "Spam 🗑️"
 
     def __init__(self, pet: "DesktopPet") -> None:
         super().__init__()
@@ -194,30 +214,58 @@ class SpeechBubble(QWidget):
         self.text = ""
         self._below = False
         self._tail_x = BUBBLE_WIDTH // 2
+        self._height = 0
+        # Not WindowTransparentForInput: the buttons must receive clicks.
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
-            | Qt.WindowType.WindowTransparentForInput
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+        self.label = QLabel(self)
+        self.label.setWordWrap(True)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setStyleSheet("color: #1e1e1e; background: transparent;")
+
+        self.food_button = QPushButton(self.FOOD_LABEL, self)
+        self.spam_button = QPushButton(self.SPAM_LABEL, self)
+        self.food_button.clicked.connect(self._on_food)
+        self.spam_button.clicked.connect(self._on_spam)
+
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self.hide)
 
     def show_text(self, text: str, duration_ms: int) -> None:
         self.text = text
-        metrics = QFontMetrics(self.font())
-        text_rect = metrics.boundingRect(
-            QRect(0, 0, BUBBLE_WIDTH - 2 * BUBBLE_PAD, 0),
-            int(Qt.TextFlag.TextWordWrap),
-            text,
-        )
-        height = max(text_rect.height(), metrics.height()) + 2 * BUBBLE_PAD + BUBBLE_TAIL
-        self.setFixedSize(BUBBLE_WIDTH, height)
+        self.label.setText(text)
+        self.food_button.setText(self.FOOD_LABEL)
+        self.food_button.setEnabled(True)
+        self.spam_button.setEnabled(True)
+        self._relayout()
         self.follow()
         self.show()
         self._hide_timer.start(duration_ms)
+
+    def _relayout(self) -> None:
+        """Size the bubble to fit the text, then place the label and the button row."""
+        inner_w = BUBBLE_WIDTH - 2 * BUBBLE_PAD
+        top = BUBBLE_PAD + (BUBBLE_TAIL if self._below else 0)
+        metrics = QFontMetrics(self.label.font())
+        text_h = metrics.boundingRect(
+            QRect(0, 0, inner_w, 0), int(Qt.TextFlag.TextWordWrap), self.text
+        ).height()
+        label_h = max(text_h, metrics.height()) + 4
+        button_h = max(self.food_button.sizeHint().height(), self.spam_button.sizeHint().height())
+        button_y = top + label_h + BUTTON_GAP
+        self.label.setGeometry(BUBBLE_PAD, top, inner_w, label_h)
+        half = (inner_w - BUTTON_GAP) // 2
+        self.food_button.setGeometry(BUBBLE_PAD, button_y, half, button_h)
+        self.spam_button.setGeometry(BUBBLE_PAD + half + BUTTON_GAP, button_y, inner_w - half - BUTTON_GAP, button_h)
+        bottom_pad = BUBBLE_PAD + (0 if self._below else BUBBLE_TAIL)
+        self._height = button_y + button_h + bottom_pad
+        self.setFixedSize(BUBBLE_WIDTH, self._height)
 
     def follow(self) -> None:
         """Move next to the pet. Called whenever the pet moves, and before the bubble is shown."""
@@ -229,28 +277,35 @@ class SpeechBubble(QWidget):
         x = centre.x() - self.width() // 2
         x = max(area.left(), min(x, area.right() - self.width() + 1))
         y = pet_rect.top() - self.height() + 1
-        self._below = y < area.top()
-        if self._below:
+        below = y < area.top()
+        if below != self._below:
+            self._below = below
+            self._relayout()  # the top padding changes when the tail moves
+        if below:
             y = pet_rect.bottom() + 1
 
         self.move(x, y)
         self._tail_x = centre.x() - x
         self.update()
 
-    def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
-        w, h = self.width(), self.height()
+    def _body_rect(self) -> QRectF:
         tail = BUBBLE_TAIL
-        body_top = tail if self._below else 0
-        body = QRectF(0, body_top, w, h - tail)
+        if self._below:
+            return QRectF(0, tail, self.width(), self.height() - tail)
+        return QRectF(0, 0, self.width(), self.height() - tail)
 
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        body = self._body_rect()
         path = QPainterPath()
         path.addRoundedRect(body, 12, 12)
-        tx = max(16, min(self._tail_x, w - 16))
-        point = QPointF(tx, body.top() - tail if self._below else body.bottom() + tail)
-        base_y = body.top() if self._below else body.bottom()
+        tx = max(16, min(self._tail_x, self.width() - 16))
+        if self._below:
+            base_y, tip_y = body.top(), body.top() - BUBBLE_TAIL
+        else:
+            base_y, tip_y = body.bottom(), body.bottom() + BUBBLE_TAIL
         pointer = QPainterPath()
         pointer.moveTo(tx - 8, base_y)
-        pointer.lineTo(point)
+        pointer.lineTo(tx, tip_y)
         pointer.lineTo(tx + 8, base_y)
         pointer.closeSubpath()
         path.addPath(pointer)
@@ -260,16 +315,22 @@ class SpeechBubble(QWidget):
         painter.setPen(QPen(QColor(60, 50, 40), 1.5))
         painter.setBrush(QColor(255, 252, 240, 240))
         painter.drawPath(path)
-        painter.setPen(QColor(30, 30, 30))
-        option = QTextOption(Qt.AlignmentFlag.AlignCenter)
-        option.setWrapMode(QTextOption.WrapMode.WordWrap)
-        painter.drawText(body.adjusted(BUBBLE_PAD, BUBBLE_PAD, -BUBBLE_PAD, -BUBBLE_PAD), self.text, option)
         painter.end()
+
+    def _on_food(self) -> None:
+        self.food_requested.emit(self.text)
+        self.food_button.setText("Thanks! 🍖")
+        self.food_button.setEnabled(False)
+
+    def _on_spam(self) -> None:
+        self.spam_requested.emit(self.text)
+        self._hide_timer.stop()
+        self.hide()
 
 
 class DesktopPet(QWidget):
     def __init__(self, screen_manager: ScreenManager, config_path: Path = CONFIG_PATH,
-                 assets_dir: Path = ASSETS_DIR) -> None:
+                 assets_dir: Path = ASSETS_DIR, weights_path: Path = WEIGHTS_PATH) -> None:
         super().__init__()
         self.screen_manager = screen_manager
         self.config_path = config_path
@@ -277,6 +338,9 @@ class DesktopPet(QWidget):
         self.config: dict | None = None
         self.config_stamp = None
         self.window_interaction = DEFAULT_CONFIG["window_interaction"]
+
+        self.brain = Brain.load(weights_path)
+        print(f"[brain] {len(self.brain.weights)} keyword weight(s), threshold={self.brain.threshold}")
 
         # RANDOM is chosen once at boot and kept for the whole session.
         self.random_skin_dir = pick_random_skin(assets_dir)
@@ -309,8 +373,16 @@ class DesktopPet(QWidget):
         self.walk_timer.timeout.connect(self._stop_walking)
 
         self.bubble = SpeechBubble(self)
+        self.bubble.food_requested.connect(self.feed_text)
+        self.bubble.spam_requested.connect(self.spam_text)
+
         self.overlay = PresentationOverlay()
         self.overlay.presentation_finished.connect(self.relocate)
+
+        self.hub = IntegrationHub()
+        self.hub_timer = QTimer(self)
+        self.hub_timer.setInterval(HUB_POLL_MS)
+        self.hub_timer.timeout.connect(self.drain_hub)
 
     def start(self) -> None:
         self.load_settings()
@@ -318,6 +390,13 @@ class DesktopPet(QWidget):
         self.relocate()
         self.show()
         self.config_timer.start()
+        self.hub.start()
+        self.hub_timer.start()
+        print(f"[workers] started: {self.hub.describe()}")
+
+    def shutdown(self) -> None:
+        self.hub.stop()
+        self.brain.save()
 
     # ---- config handling -------------------------------------------------
 
@@ -390,20 +469,56 @@ class DesktopPet(QWidget):
             f"reminders={len(cfg['custom_reminders'])}"
         )
 
+    # ---- presentations ---------------------------------------------------
+
+    def present(self, text: str) -> None:
+        """Show text in the bubble and play a random presentation over the pet."""
+        style = random_style()
+        print(f"[presentation] {style.name}")
+        screen = QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
+        self.bubble.show_text(text, BUBBLE_MS)
+        self.overlay.play(style, screen.geometry(), QPointF(self.geometry().center()), text)
+
+    def fire_reminder(self, rule: dict) -> None:
+        print(f"[reminder] {rule['name']}: {rule['text']}")
+        self.present(rule["text"])
+
+    # ---- integrations ----------------------------------------------------
+
+    def drain_hub(self) -> None:
+        """Core loop step: take every queued item, classify it, and present the important ones."""
+        while True:
+            try:
+                item: Item = self.hub.queue.get_nowait()
+            except queue.Empty:
+                break
+            self.handle_item(item)
+
+    def handle_item(self, item: Item) -> None:
+        verdict = self.brain.evaluate(item.text)
+        frequent = self.config is not None and self.config["frequency"] == "frequent"
+        tag = (f"[{item.source}] score={verdict.score:+.2f} important={verdict.important} "
+               f"keywords={list(verdict.keywords)[:6]}")
+        if verdict.important or frequent:
+            print(f"{tag} -> presenting" + (" (frequent mode)" if frequent and not verdict.important else ""))
+            self.present(item.text)
+        else:
+            print(f"{tag} -> skipped")
+
+    def feed_text(self, text: str) -> None:
+        changed = self.brain.reward(text)
+        print(f"[feedback] Give Food: boosted {changed or 'nothing (no keywords)'}")
+
+    def spam_text(self, text: str) -> None:
+        changed = self.brain.punish(text)
+        print(f"[feedback] Spam: lowered {changed or 'nothing (no keywords)'}")
+
     # ---- behaviour -------------------------------------------------------
 
     def wander(self) -> None:
         """Timer slot for random moves. Skipped while a presentation is playing."""
         if not self.overlay.is_playing():
             self.relocate()
-
-    def fire_reminder(self, rule: dict) -> None:
-        print(f"[reminder] {rule['name']}: {rule['text']}")
-        style = random_style()
-        print(f"[presentation] {style.name}")
-        screen = QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
-        self.bubble.show_text(rule["text"], BUBBLE_MS)
-        self.overlay.play(style, screen.geometry(), QPointF(self.geometry().center()), rule["text"])
 
     def relocate(self) -> None:
         screen = self.screen_manager.random_screen()
@@ -436,12 +551,14 @@ class DesktopPet(QWidget):
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     app = QApplication(sys.argv)
 
     screen_manager = ScreenManager()
     print(screen_manager.describe())
 
     pet = DesktopPet(screen_manager)
+    app.aboutToQuit.connect(pet.shutdown)
     pet.start()
 
     return app.exec()
