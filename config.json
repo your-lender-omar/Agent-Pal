@@ -1,0 +1,12 @@
+{
+  "frequency": "interval_10min",
+  "window_interaction": false,
+  "selected_skin": "skin1",
+  "custom_reminders": [
+    {
+      "name": "Water Reminder",
+      "interval_sec": 900,
+      "text": "Time to drink water! 💧"
+    }
+  ]
+}
